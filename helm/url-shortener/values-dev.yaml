@@ -1,0 +1,17 @@
+app:
+  environment: dev
+
+images:
+  tag: dev
+
+backend:
+  replicas: 1
+  publicBaseUrl: http://dev.fesko.fun
+
+frontend:
+  replicas: 1
+  service:
+    type: ClusterIP
+
+postgres:
+  hostPath: /var/lib/url-shortener-postgres-dev

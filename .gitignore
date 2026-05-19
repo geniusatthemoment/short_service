@@ -1,0 +1,17 @@
+node_modules
+dist
+.env
+.DS_Store
+npm-debug.log*
+
+# docker image artifacts
+artifacts/images/
+*.tar
+*.tar.gz
+
+# local deps/builds
+node_modules/
+client/node_modules/
+server/node_modules/
+client/dist/
+.env

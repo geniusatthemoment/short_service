@@ -1,0 +1,144 @@
+name: build-and-deploy
+
+on:
+  push:
+    branches:
+      - develop
+      - qa
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: target environment
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      env_name: ${{ steps.resolve.outputs.env_name }}
+      namespace: ${{ steps.resolve.outputs.namespace }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+      values_file: ${{ steps.resolve.outputs.values_file }}
+    steps:
+      - name: resolve environment
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENV_NAME="${{ github.event.inputs.environment }}"
+          elif [ "${{ github.ref_name }}" = "main" ]; then
+            ENV_NAME="prod"
+          elif [ "${{ github.ref_name }}" = "qa" ]; then
+            ENV_NAME="qa"
+          else
+            ENV_NAME="dev"
+          fi
+
+          if [ "$ENV_NAME" = "prod" ]; then
+            NAMESPACE="url-shortener"
+          else
+            NAMESPACE="url-shortener-$ENV_NAME"
+          fi
+
+          echo "env_name=$ENV_NAME" >> "$GITHUB_OUTPUT"
+          echo "namespace=$NAMESPACE" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$ENV_NAME" >> "$GITHUB_OUTPUT"
+          echo "values_file=values-$ENV_NAME.yaml" >> "$GITHUB_OUTPUT"
+
+  build:
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: login to docker hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            bakr123/short_service:${{ needs.prepare.outputs.image_tag }}
+            bakr123/short_service:sha-${{ github.sha }}
+
+      - name: build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./client/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            bakr123/short_service_client:${{ needs.prepare.outputs.image_tag }}
+            bakr123/short_service_client:sha-${{ github.sha }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - build
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: prepare ssh
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.K8S_SSH_KEY }}" > ~/.ssh/k8s_key
+          chmod 600 ~/.ssh/k8s_key
+          ssh-keyscan -H "${{ secrets.K8S_SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: copy helm chart
+        run: |
+          scp -i ~/.ssh/k8s_key -P "${{ secrets.K8S_SSH_PORT }}" -r ./helm \
+            "${{ secrets.K8S_SSH_USER }}@${{ secrets.K8S_SSH_HOST }}:/tmp/helm-${{ github.sha }}"
+
+      - name: helm deploy
+        run: |
+          ssh -i ~/.ssh/k8s_key -P "${{ secrets.K8S_SSH_PORT }}" \
+            "${{ secrets.K8S_SSH_USER }}@${{ secrets.K8S_SSH_HOST }}" <<'SSH'
+              set -e
+
+              ENV_NAME="${{ needs.prepare.outputs.env_name }}"
+              NAMESPACE="${{ needs.prepare.outputs.namespace }}"
+              IMAGE_TAG="${{ needs.prepare.outputs.image_tag }}"
+              VALUES_FILE="${{ needs.prepare.outputs.values_file }}"
+              CHART_DIR="/tmp/helm-${{ github.sha }}/url-shortener"
+
+              kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+              kubectl label namespace "$NAMESPACE" environment="$ENV_NAME" --overwrite
+
+              helm upgrade --install "url-shortener-$ENV_NAME" "$CHART_DIR" \
+                -n "$NAMESPACE" \
+                -f "$CHART_DIR/values.yaml" \
+                -f "$CHART_DIR/$VALUES_FILE" \
+                --set images.tag="$IMAGE_TAG" \
+                --wait \
+                --atomic \
+                --timeout 5m
+
+              kubectl rollout status deployment/backend -n "$NAMESPACE" --timeout=180s
+              kubectl rollout status deployment/frontend -n "$NAMESPACE" --timeout=180s
+              kubectl get pods -n "$NAMESPACE" -o wide
+          SSH

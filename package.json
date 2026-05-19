@@ -1,0 +1,27 @@
+{
+  "name": "short-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c green,blue \"npm run dev -w server\" \"npm run dev -w client\"",
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "npm run migrate -w server",
+    "image:server": "docker build -f server/Dockerfile -t short-service-server:1.0.0 .",
+    "image:client": "docker build -f client/Dockerfile -t short-service-client:1.0.0 .",
+    "image:build": "npm run image:server && npm run image:client",
+    "image:save": "mkdir -p artifacts/images && docker save short-service-server:1.0.0 -o artifacts/images/short-service-server-1.0.0.tar && docker save short-service-client:1.0.0 -o artifacts/images/short-service-client-1.0.0.tar",
+    "k8s:apply": "kubectl apply -k k8s",
+    "k8s:delete": "kubectl delete -k k8s"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

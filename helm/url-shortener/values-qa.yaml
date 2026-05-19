@@ -1,0 +1,17 @@
+app:
+  environment: qa
+
+images:
+  tag: qa
+
+backend:
+  replicas: 2
+  publicBaseUrl: http://qa.fesko.fun
+
+frontend:
+  replicas: 2
+  service:
+    type: ClusterIP
+
+postgres:
+  hostPath: /var/lib/url-shortener-postgres-qa
