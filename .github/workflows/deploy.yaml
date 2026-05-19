@@ -6,6 +6,7 @@ on:
       - develop
       - qa
       - main
+
   workflow_dispatch:
     inputs:
       environment:
@@ -30,6 +31,7 @@ jobs:
       namespace: ${{ steps.resolve.outputs.namespace }}
       image_tag: ${{ steps.resolve.outputs.image_tag }}
       values_file: ${{ steps.resolve.outputs.values_file }}
+
     steps:
       - name: resolve environment
         id: resolve
@@ -44,11 +46,7 @@ jobs:
             ENV_NAME="dev"
           fi
 
-          if [ "$ENV_NAME" = "prod" ]; then
-            NAMESPACE="url-shortener"
-          else
-            NAMESPACE="url-shortener-$ENV_NAME"
-          fi
+          NAMESPACE="url-shortener-$ENV_NAME"
 
           echo "env_name=$ENV_NAME" >> "$GITHUB_OUTPUT"
           echo "namespace=$NAMESPACE" >> "$GITHUB_OUTPUT"
@@ -58,6 +56,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: prepare
+
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -98,6 +97,7 @@ jobs:
     needs:
       - prepare
       - build
+
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -125,11 +125,18 @@ jobs:
               IMAGE_TAG="${{ needs.prepare.outputs.image_tag }}"
               VALUES_FILE="${{ needs.prepare.outputs.values_file }}"
               CHART_DIR="/tmp/helm-${{ github.sha }}/url-shortener"
+              RELEASE_NAME="url-shortener-$ENV_NAME"
+
+              echo "Deploying environment: $ENV_NAME"
+              echo "Namespace: $NAMESPACE"
+              echo "Image tag: $IMAGE_TAG"
+              echo "Values file: $VALUES_FILE"
+              echo "Release: $RELEASE_NAME"
 
               kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
               kubectl label namespace "$NAMESPACE" environment="$ENV_NAME" --overwrite
 
-              helm upgrade --install "url-shortener-$ENV_NAME" "$CHART_DIR" \
+              helm upgrade --install "$RELEASE_NAME" "$CHART_DIR" \
                 -n "$NAMESPACE" \
                 -f "$CHART_DIR/values.yaml" \
                 -f "$CHART_DIR/$VALUES_FILE" \
@@ -140,5 +147,8 @@ jobs:
 
               kubectl rollout status deployment/backend -n "$NAMESPACE" --timeout=180s
               kubectl rollout status deployment/frontend -n "$NAMESPACE" --timeout=180s
+
               kubectl get pods -n "$NAMESPACE" -o wide
+              kubectl get svc -n "$NAMESPACE"
+              helm list -n "$NAMESPACE"
           SSH
