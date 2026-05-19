@@ -12,7 +12,7 @@ frontend:
   replicas: 3
   service:
     type: NodePort
-    nodePort: 30080
+    nodePort: 30082
 
 postgres:
   hostPath: /var/lib/url-shortener-postgres-prod
